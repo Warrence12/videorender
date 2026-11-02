@@ -1,0 +1,43 @@
+name: Render video
+
+on:
+  workflow_dispatch:
+    inputs:
+      key:    { description: 'Unique video id', required: true }
+      title:  { description: 'Headline', required: true }
+      lines:  { description: 'JSON list of 3 short lines', required: true }
+      images: { description: 'JSON list of image URLs', required: true }
+      look:   { description: 'dramatic | glam | sports | mystery | breaking', required: false, default: 'dramatic' }
+      music:  { description: 'Optional direct link to an mp3', required: false, default: '' }
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-montserrat
+          pip install -q pillow
+      - name: Render
+        env:
+          INPUT_KEY: ${{ inputs.key }}
+          INPUT_TITLE: ${{ inputs.title }}
+          INPUT_LINES: ${{ inputs.lines }}
+          INPUT_IMAGES: ${{ inputs.images }}
+          INPUT_LOOK: ${{ inputs.look }}
+          INPUT_MUSIC: ${{ inputs.music }}
+        run: python render.py
+      - name: Publish as a release (the Apps Script picks it up from here)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEY: ${{ inputs.key }}
+        run: |
+          gh release create "video-$KEY" "out/$KEY.mp4" --title "video-$KEY" --notes "auto-generated"
+          # keep only the newest 12 releases so the repo stays tidy
+          gh release list --limit 100 --json tagName --jq '.[12:][].tagName' | while read t; do gh release delete "$t" --cleanup-tag --yes; done
