@@ -6,7 +6,7 @@ Called by the GitHub Actions workflow; all inputs arrive as environment variable
   INPUT_LINES   JSON list of 3 short lines
   INPUT_IMAGES  JSON list of image URLs (1 to 5)
   INPUT_LOOK    dramatic | glam | sports | mystery | breaking
-Optional: put .mp3 files in the repo's music/ folder; one is picked at random as background audio.
+Music (optional): INPUT_MUSIC = direct link to an mp3 (used if given), otherwise a random .mp3 from the repo's music/ folder.
 Output: out/<key>.mp4
 """
 import glob, json, os, random, re, subprocess, sys, textwrap, urllib.request
@@ -113,6 +113,15 @@ def main():
         prev = tag
     cmd += ['-filter_complex', ';'.join(parts)]
     tracks = sorted(glob.glob('music/*.mp3') + glob.glob('music/*.m4a'))
+    link = (os.environ.get('INPUT_MUSIC') or '').strip()
+    if link:
+        try:
+            req = urllib.request.Request(link, headers={'User-Agent': 'Mozilla/5.0 (video-render bot)'})
+            data = urllib.request.urlopen(req, timeout=40).read()
+            if len(data) > 50000:
+                open(os.path.join(work, 'music_dl.mp3'), 'wb').write(data); tracks = [os.path.join(work, 'music_dl.mp3')]
+        except Exception as e:
+            print('Could not download the music link, using the music/ folder instead:', e)
     final = os.path.join('out', key + '.mp4')
     if tracks:
         music = random.choice(tracks)
