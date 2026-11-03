@@ -6,6 +6,7 @@ Called by the GitHub Actions workflow; all inputs arrive as environment variable
   INPUT_LINES   JSON list of 3 short lines
   INPUT_IMAGES  JSON list of image URLs (1 to 5)
   INPUT_LOOK    dramatic | glam | sports | mystery | breaking
+  INPUT_CLIPS   (optional) JSON list of direct links to stock video clips; used for shots 2-5 instead of still images
 Music (optional): INPUT_MUSIC = direct link to an mp3 (used if given), otherwise a random .mp3 from the repo's music/ folder.
 Output: out/<key>.mp4
 """
@@ -50,6 +51,19 @@ def download(urls, folder):
             print('skipped image', u[:80], e)
     return out
 
+def download_clips(urls, folder):
+    out = []
+    for i, u in enumerate(urls):
+        try:
+            req = urllib.request.Request(u, headers={'User-Agent': 'Mozilla/5.0 (video-render bot)'})
+            data = urllib.request.urlopen(req, timeout=60).read()
+            if len(data) < 30000: continue
+            path = os.path.join(folder, 'clip%d.mp4' % i)
+            open(path, 'wb').write(data); out.append(path)
+        except Exception as e:
+            print('skipped clip', u[:80], e)
+    return out
+
 def text_overlay(text, size, color, where, path):
     """Transparent 720x1280 PNG: wrapped text on a soft dark panel so it stays readable on any photo."""
     img = Image.new('RGBA', (W, H), (0, 0, 0, 0)); d = ImageDraw.Draw(img)
@@ -79,7 +93,11 @@ def main():
     work = 'work'; os.makedirs(work, exist_ok=True); os.makedirs('out', exist_ok=True)
 
     imgs = download(urls, work)
-    if not imgs: sys.exit('No usable images could be downloaded.')
+    clips = download_clips(json.loads(os.environ.get('INPUT_CLIPS') or '[]')[:4], work)
+    if not imgs and not clips: sys.exit('No usable images or clips could be downloaded.')
+    if not imgs:   # clips only: use a frame from the first clip as the opening still
+        run(['ffmpeg', '-y', '-i', clips[0], '-frames:v', '1', os.path.join(work, 'frame.jpg')])
+        imgs = [ImageOps.fit(Image.open(os.path.join(work, 'frame.jpg')).convert('RGB'), (BIG_W, BIG_H), Image.LANCZOS)]
 
     short = title if len(title) <= 110 else re.sub(r'\s+\S*$', '', title[:107]) + '...'
     shots = [(short, 5, 50, look['accent'], 'center')] + [(l, 4, 44, '#ffffff', 'bottom') for l in lines] + [('FULL STORY IN THE COMMENTS', 3, 42, look['accent'], 'center')]
@@ -89,14 +107,19 @@ def main():
         last = i == len(shots) - 1
         dur = ln + (0 if last else XF)                  # overlap with the next shot for the transition
         frames = int(dur * FPS)
-        base = os.path.join(work, 'img%d.jpg' % i); imgs[i % len(imgs)].save(base, quality=92)
         ov = os.path.join(work, 'txt%d.png' % i); text_overlay(txt, size, color, where, ov)
-        z = ("min(1+0.0011*on,1.28)" if look['zoom'][i % 5] == 'in' else "max(1.28-0.0011*on,1)")
-        fc = ("[0:v]zoompan=z='%s':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=%d:s=%dx%d:fps=%d,%s,vignette=PI/5[bg];"
-              "[1:v]format=rgba,fade=t=in:st=0.3:d=0.4:alpha=1[tx];"
-              "[bg][tx]overlay=0:0:format=auto,format=yuv420p[v]") % (z, frames, W, H, FPS, look['eq'])
         out = os.path.join(work, 'seg%d.mp4' % i)
-        run(['ffmpeg', '-y', '-i', base, '-loop', '1', '-framerate', str(FPS), '-t', '%.2f' % dur, '-i', ov,
+        tail = ("[1:v]format=rgba,fade=t=in:st=0.3:d=0.4:alpha=1[tx];[bg][tx]overlay=0:0:format=auto,format=yuv420p[v]")
+        clip = clips[(i - 1) % len(clips)] if (clips and i >= 1) else None   # shot 1 stays a photo; the rest are moving clips
+        if clip:
+            fc = ("[0:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1,fps=%d,%s,vignette=PI/5[bg];" % (W, H, W, H, FPS, look['eq'])) + tail
+            inp = ['-stream_loop', '-1', '-i', clip]
+        else:
+            base = os.path.join(work, 'img%d.jpg' % i); imgs[i % len(imgs)].save(base, quality=92)
+            z = ("min(1+0.0011*on,1.28)" if look['zoom'][i % 5] == 'in' else "max(1.28-0.0011*on,1)")
+            fc = ("[0:v]zoompan=z='%s':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=%d:s=%dx%d:fps=%d,%s,vignette=PI/5[bg];" % (z, frames, W, H, FPS, look['eq'])) + tail
+            inp = ['-i', base]
+        run(['ffmpeg', '-y'] + inp + ['-loop', '1', '-framerate', str(FPS), '-t', '%.2f' % dur, '-i', ov,
              '-filter_complex', fc, '-map', '[v]', '-frames:v', str(frames), '-r', str(FPS),
              '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p', out])
         segs.append((out, ln))
