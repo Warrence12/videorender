@@ -8,6 +8,7 @@ on:
       lines:  { description: 'JSON list of 3 short lines', required: true }
       images: { description: 'JSON list of image URLs', required: true }
       look:   { description: 'dramatic | glam | sports | mystery | breaking', required: false, default: 'dramatic' }
+      clips:  { description: 'Optional JSON list of stock video clip links', required: false, default: '[]' }
       music:  { description: 'Optional direct link to an mp3', required: false, default: '' }
 
 permissions:
@@ -32,6 +33,7 @@ jobs:
           INPUT_IMAGES: ${{ inputs.images }}
           INPUT_LOOK: ${{ inputs.look }}
           INPUT_MUSIC: ${{ inputs.music }}
+          INPUT_CLIPS: ${{ inputs.clips }}
         run: python render.py
       - name: Publish as a release (the Apps Script picks it up from here)
         env:
